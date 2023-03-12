@@ -48,15 +48,15 @@ end
 # European option MC value
 function compute_mc_option_price(model::BS, option::EuOption, npaths::Int64, nsteps::Int64, alpha::Float64)::Tuple{Float64, Float64, Float64}
     rng = Xoshiro(1234);
-    st::Matrix{Float64} = model.s0*ones(npaths, 1)
+    sT::Matrix{Float64} = model.s0*ones(npaths, 1)
     dt::Float64 = option.ttm/nsteps
     for _ in 1:nsteps
         z = Random.randn(rng, Float64, npaths, 1)
-        st = st.*(1.0 .+ model.r*dt .+ model.vol*sqrt(dt).*z)
+        sT = sT.*(1.0 .+ model.r*dt .+ model.vol*sqrt(dt).*z)
     end
 
-    vt = compute_option_payoff(option, st)
-    v0 = discount_factor(model, option.ttm)*vt
+    vT = compute_option_payoff(option, sT)
+    v0 = discount_factor(model, option.ttm)*vT
     
     v0_avg = Statistics.mean(v0)
     v0_std = Statistics.std(v0)
@@ -64,35 +64,39 @@ function compute_mc_option_price(model::BS, option::EuOption, npaths::Int64, nst
     return v0_avg, v0_low, v0_high
 end
 
-# American option MC value using Longstaff-Schwarz algorithm (least-squares Monte Carlo)
+# American option MC value using Longstaff-Schwarz algorithm (least-squares Monte Carlo) with rng state memorization
 function compute_mc_option_price(model::BS, option::AmOption, npaths::Int64, nsteps::Int64, nbasisfns::Int64, alpha::Float64)::Tuple{Float64, Float64, Float64}
     rng = Xoshiro(1234);
+    rng_states::Vector{Xoshiro} = Vector{Xoshiro}(undef, nsteps)
     dt::Float64 = option.ttm/nsteps
-    st::Matrix{Float64} = zeros(npaths, nsteps + 1)
-    st[:, 1] = model.s0*ones(npaths, 1)
+    sti = s0*ones(npaths, 1)
 
     for i in 1:nsteps
+        rng_states[i] = copy(rng)
         z = Random.randn(rng, Float64, npaths, 1)
-        st[:, i + 1] = st[:, i].*(1.0 .+ model.r*dt .+ model.vol*sqrt(dt).*z)
+        sti = sti.*(1.0 .+ model.r*dt .+ model.vol*sqrt(dt).*z)
     end
 
-    vt = discount_factor(model, option.ttm)*compute_option_payoff(option, st[:, end])
-    basis_fns = basis.(Laguerre{0}, (0:1:nbasisfns))
+    vti = discount_factor(model, dt)*compute_option_payoff(option, sti)
+    basis_fns = basis.(Legendre, (0:1:nbasisfns - 1))
 
     for i in nsteps:-1:1
-        vt_ee = discount_factor(model, i*dt)*compute_option_payoff(option, st[:, i])
-        itm_idx = vt_ee .> 0
+        z = Random.randn(rng_states[i], Float64, npaths, 1)
+        sti = sti./(1.0 .+ model.r*dt .+ model.vol*sqrt(dt).*z)
+        vti_ee = compute_option_payoff(option, sti)
+        itm_idx = vti_ee .> 0
         if any(itm_idx)
-            basis_fn_mat = reduce(hcat, [basis_fn.(st[itm_idx, i]) for basis_fn in basis_fns])
-            b_reg = basis_fn_mat\vt[itm_idx]
-            vt[itm_idx] = basis_fn_mat*b_reg
+            basis_fn_mat = reduce(hcat, [basis_fn.(sti[itm_idx]) for basis_fn in basis_fns])
+            b_reg = basis_fn_mat\vti[itm_idx]
+            vti[itm_idx] = basis_fn_mat*b_reg
         end
+        vti = discount_factor(model, dt)*vti
     end
 
-    vt_avg = Statistics.mean(vt)
-    vt_std = Statistics.std(vt)
-    vt_low, vt_high = compute_confidence_interval(vt_avg, vt_std, npaths, alpha)
-    return vt_avg, vt_low, vt_high
+    v0_avg = Statistics.mean(vti)
+    v0_std = Statistics.std(vti)
+    v0_low, v0_high = compute_confidence_interval(v0_avg, v0_std, npaths, alpha)
+    return v0_avg, v0_low, v0_high
 end
 
 # Model setup
@@ -104,13 +108,13 @@ bs_model::BS = BS(r, vol, s0)
 # European option setup
 strike::Float64 = 100.0
 ttm::Float64 = 1.0 # in years
-option_right::Right = call
+option_right::Right = put
 eu_option::EuOption = EuOption(option_right, strike, ttm)
 
 # MC settings
 npaths::Int64 = 100000
 nsteps::Int64 = 360
-alpha::Float64 = 0.95
+alpha::Float64 = 0.99
 
 # Compute and print european option MC price
 t = time()
@@ -122,7 +126,7 @@ duration = time() - t
 am_option::AmOption = AmOption(option_right, strike, ttm)
 
 # LSMC settings
-nbasisfns::Int64 = 4
+nbasisfns::Int64 = 2
 
 # Compute and print european option MC price
 t = time()
