@@ -1,4 +1,4 @@
-# quant.jl
+# quantlib
 
 A small, just-for-fun project on option pricing in Julia.
 
