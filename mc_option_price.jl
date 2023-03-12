@@ -1,5 +1,5 @@
 using Random, Statistics, Distributions
-using Polynomials, SpecialPolynomials
+using SpecialPolynomials
 using Printf
 
 # BS model specification
@@ -64,7 +64,7 @@ function compute_mc_option_price(model::BS, option::EuOption, npaths::Int64, nst
     return v0_avg, v0_low, v0_high
 end
 
-# American option MC value using Longstaff-Schwarz algorithm (least-squares Monte Carlo) with rng state memorization
+# American option MC value using Longstaff-Schwarz algorithm (least-squares Monte Carlo) with RNG state memorization
 function compute_mc_option_price(model::BS, option::AmOption, npaths::Int64, nsteps::Int64, nbasisfns::Int64, alpha::Float64)::Tuple{Float64, Float64, Float64}
     rng = Xoshiro(1234);
     rng_states::Vector{Xoshiro} = Vector{Xoshiro}(undef, nsteps)
