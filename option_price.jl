@@ -45,6 +45,41 @@ function compute_confidence_interval(avg::Float64, std::Float64, nsamples::Int64
     return avg_low, avg_high
 end
 
+function compute_bs_option_price(model::BS, option::EuOption)::Float64
+    d1 = (log(model.s0/option.strike) + (model.r + 0.5*model.vol^2)*option.ttm)/(model.vol*sqrt(option.ttm));
+    d2 = d1 - model.vol*sqrt(option.ttm);
+    if option.right == call
+        return model.s0*cdf(Normal(), d1) - option.strike*exp(-model.r*option.ttm)*cdf(Normal(), d2)
+    else
+        return option.strike*exp(-model.r*option.ttm)*cdf(Normal(), -d2) - model.s0*cdf(Normal(), -d1)
+    end
+end
+
+# European option binomial option value
+# Uses tricks from "Nine Ways to Implement the Binomial Method for Option Valuation in MATLAB"
+function compute_bin_option_price(model::BS, option::EuOption, nperiods::Int64)::Float64
+    dt::Float64 = option.ttm/nperiods
+    A::Float64 = 0.5*(exp(-model.r*dt) + exp((model.r + model.vol^2)*dt))
+    u::Float64 = A + sqrt(A^2 - 1)
+    d::Float64 = 1/u
+    q::Float64 = (exp(model.r*dt) - d)/(u - d)
+
+
+    # Option values at time T
+    if option.right == call
+        vT = max.(model.s0*d.^(transpose(collect(nperiods:-1:0))).*u.^(transpose(collect(0:nperiods))) .- option.strike, 0.0);
+    else
+        vT = max.(option.strike .- model.s0*d.^(transpose(collect(nperiods:-1:0))).*u.^(transpose(collect(0:nperiods))), 0.0);
+    end
+    
+    # Re-trace to get option value at time zero
+    for i = nperiods:-1:1
+        vT = q*vT[2:i + 1] .+ (1 - q)*vT[1:i];
+    end
+
+    return exp(-model.r*option.ttm)*vT[1]
+end
+
 # European option MC value
 function compute_mc_option_price(model::BS, option::EuOption, npaths::Int64, nsteps::Int64, alpha::Float64)::Tuple{Float64, Float64, Float64}
     rng = Xoshiro(1234);
@@ -110,6 +145,21 @@ strike::Float64 = 100.0
 ttm::Float64 = 1.0 # in years
 option_right::Right = put
 eu_option::EuOption = EuOption(option_right, strike, ttm)
+
+# Compute and print european option bs formula price
+t = time()
+bs_price = compute_bs_option_price(bs_model, eu_option)
+duration = time() - t
+@printf("[European Option]\n\tbs_price: %f\n\tduration: %fs\n", bs_price, duration)
+
+# Binomial option pricing model settings
+nperiods::Int64 = 360
+
+# Compute and print european option binomial price
+t = time()
+bin_price = compute_bin_option_price(bs_model, eu_option, nperiods)
+duration = time() - t
+@printf("[European Option]\n\tbin_price: %f\n\tduration: %fs\n", bin_price, duration)
 
 # MC settings
 npaths::Int64 = 100000
